@@ -161,18 +161,18 @@ class CAIGroupedEmbeddingBag(BaseEmbedding):
         return self._config
 
 
-# TODO implement a more efficient CAIGroupedEmbeddingBag by fusing multiple embedding bags into a single one
+# implement a more efficient CAIGroupedEmbeddingBag by fusing multiple embedding bags into a single one
 class CAIBatchedDenseEmbeddingBag(BaseBatchedEmbeddingBag):
     def __init__(
         self,
         config: GroupedEmbeddingConfig,
         pg: Optional[dist.ProcessGroup] = None,
         device: Optional[torch.device] = None,
-        cache_ratio : float = 1.0, 
+        cache_ratio : float = 0.01, # TODO: transmit this parameter.
     ) -> None:
         super().__init__(config, pg, device)
 
-        # TODO() fused multiple embedding bags into a single one as self._emb_module
+        # fused multiple embedding bags into a single one as self._emb_module
         # replace fbgemm implementation with colossalai FAW
         # Table-batched version of nn.EmbeddingBag(sparse=False)
         # https://github.com/pytorch/FBGEMM/blob/1a61102ad65af645cdd9d4a78b6dfd6388dc7735/fbgemm_gpu/fbgemm_gpu/split_table_batched_embeddings_ops.py
@@ -186,7 +186,7 @@ class CAIBatchedDenseEmbeddingBag(BaseBatchedEmbeddingBag):
         #         or not torch.cuda.is_available(),
         #     )
         # )
-
+        print("CAIBatchedDenseEmbeddingBag")
         num_embeddings = sum(self._num_embeddings)
         assert all(x == self._local_cols[0] for x in self._local_cols), "local col should be consistent in all embeddings"
         embedding_dim = self._local_cols[0]
@@ -214,10 +214,6 @@ class CAIBatchedDenseEmbeddingBag(BaseBatchedEmbeddingBag):
         )
         # prepare for features concatenation
         self._table_idx_offset_list = np.cumsum([0] + self._num_embeddings[:-1])
-        
-        # TODO() not support split_embedding_weights currently
-        # init parameter by uniformly init the _weight
-        # self.init_parameters()
 
     @property
     def emb_module(
@@ -275,10 +271,11 @@ class CAIBatchedDenseEmbeddingBag(BaseBatchedEmbeddingBag):
         values_full = torch.cat(values_list)
         offsets_full = self.concatenate_offsets(offsets_list)
         weights_full = torch.cat(weights_list)
+        batch_size = len(offsets_full) // len(self._config.embedding_tables)
         # TODO: pad weights
         assert len(weights_full) == 0 or len(weights_full) == len(values_full)
         if len(weights_full) == 0:
             weights_full = None
         output = self.emb_module(values_full.type(torch.int), offsets_full.type(torch.int), weights_full)
-        output = output.reshape(1,-1)
+        output = output.reshape(batch_size,-1)
         return output
